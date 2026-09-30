@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DharaLens: Advanced 3D Recharge Analytics</title>
+    
+    <!-- Tailwind CSS for Enterprise UI -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Mapbox GL JS for 3D GIS -->
+    <script src='https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js'></script>
+    <link href='https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css' rel='stylesheet' />
+    <!-- Chart.js for Analytics -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        body { margin: 0; padding: 0; display: flex; height: 100vh; overflow: hidden; background-color: #0f172a; color: white;}
+        #map { flex-grow: 1; height: 100%; }
+        .glass-panel { background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(12px); border-right: 1px solid #334155; }
+        .custom-marker { background-color: #ef4444; width: 15px; height: 15px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 10px rgba(239, 68, 68, 0.8); cursor: pointer;}
+        .intervention-marker { background-color: #3b82f6; width: 15px; height: 15px; border-radius: 0%; border: 2px solid white; box-shadow: 0 0 10px rgba(59, 130, 246, 0.8); cursor: pointer;}
+    </style>
+</head>
+<body class="flex">
+
+    <!-- Left Sidebar: Analytics & Controls -->
+    <div class="w-96 glass-panel flex flex-col p-6 z-10 overflow-y-auto">
+        <h1 class="text-2xl font-bold text-blue-400 mb-1">💧 DharaLens AI</h1>
+        <p class="text-xs text-slate-400 mb-6">3D Springshed & Topography Engine</p>
+
+        <!-- Status Cards -->
+        <div class="grid grid-cols-2 gap-3 mb-6">
+            <div class="bg-slate-800 p-3 rounded-lg border border-slate-700">
+                <div class="text-xs text-slate-400">Target Region</div>
+                <div class="font-semibold text-sm">Karbi Anglong</div>
+            </div>
+            <div class="bg-slate-800 p-3 rounded-lg border border-slate-700">
+                <div class="text-xs text-slate-400">Elevation</div>
+                <div class="font-semibold text-sm text-amber-400">845m MSL</div>
+            </div>
+        </div>
+
+        <!-- Chart -->
+        <div class="mb-6 bg-slate-800 p-3 rounded-lg border border-slate-700">
+            <div class="text-xs text-slate-400 mb-2">Spring Discharge Rate (Liters/Min) YoY</div>
+            <canvas id="dischargeChart" height="150"></canvas>
+        </div>
+
+        <!-- Controls -->
+        <div class="mb-4">
+            <label class="text-xs font-semibold text-slate-300">Run Geomorphological ML Model</label>
+            
+            <button id="run-btn" onclick="executeAI()" class="mt-2 w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-4 rounded transition-all">
+                Generate 3D Recharge Model
+            </button>
+            
+            <button id="heat-btn" onclick="toggleHeatmap()" class="mt-3 w-full bg-slate-700 hover:bg-slate-600 text-slate-200 border border-slate-600 font-semibold py-2 px-4 rounded transition-all">
+                Toggle Soil Moisture Heatmap
+            </button>
+        </div>
+
+        <!-- Results Panel (Hidden initially) -->
+        <div id="results" class="hidden mt-4 bg-emerald-900/30 border border-emerald-500/50 p-4 rounded-lg">
+            <h3 class="text-emerald-400 font-bold mb-2">Model Converged</h3>
+            <div class="text-sm text-slate-300 space-y-2">
+                <p><strong>Catchment Area:</strong> 1.2 sq km</p>
+                <p><strong>Primary Driver:</strong> Surface Runoff (High Slope)</p>
+                <div class="mt-3 p-2 bg-slate-800 rounded border border-slate-600 text-xs">
+                    <span class="text-blue-400 font-bold">Action:</span> Construct staggered contour trenches at Lat: 26.124, Lng: 93.156 to intercept runoff before it bypasses the aquifer.
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Map Area -->
+    <div id="map"></div>
+
+    <script>
+        // 1. Initialize Mapbox
+        mapboxgl.accessToken = 'pk.eyJ1IjoiaWFtaXFyYW0iLCJhIjoiY211bjF4eWRzMDY0bDJ6czl6ODFmZnNtMiJ9.Na_7pOEo6GAne-qzPKLjow'; 
+        
+        const map = new mapboxgl.Map({
+            container: 'map',
+            style: 'mapbox://styles/mapbox/satellite-streets-v12', 
+            center: [93.155, 26.120], 
+            zoom: 14.5,
+            pitch: 65, 
+            bearing: -20
+        });
+
+        // 2. Add 3D Terrain (Digital Elevation Model)
+        map.on('load', () => {
+            map.addSource('mapbox-dem', {
+                'type': 'raster-dem',
+                'url': 'mapbox://mapbox.mapbox-terrain-dem-v1',
+                'tileSize': 512,
+                'maxzoom': 14
+            });
+            map.setTerrain({ 'source': 'mapbox-dem', 'exaggeration': 1.5 });
+
+            map.addLayer({
+                'id': 'sky',
+                'type': 'sky',
+                'paint': { 'sky-type': 'atmosphere', 'sky-atmosphere-sun': [0.0, 0.0], 'sky-atmosphere-sun-intensity': 15 }
+            });
+        });
+
+        // 3. Add the Target Spring Marker
+        const springEl = document.createElement('div');
+        springEl.className = 'custom-marker';
+        new mapboxgl.Marker(springEl)
+            .setLngLat([93.155, 26.120])
+            .setPopup(new mapboxgl.Popup({ offset: 25 }).setHTML('<h3 style="color:black;">Target Spring</h3><p style="color:black;">Critical Depletion Zone</p>'))
+            .addTo(map);
+
+        // 4. Chart.js Implementation
+        const ctx = document.getElementById('dischargeChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: ['2021', '2022', '2023', '2024', '2025', '2026'],
+                datasets: [{
+                    label: 'Discharge',
+                    data: [45, 42, 38, 30, 25, 18],
+                    borderColor: '#ef4444',
+                    tension: 0.4,
+                    borderWidth: 2,
+                    pointBackgroundColor: '#ef4444'
+                }]
+            },
+            options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, grid: { color: '#334155' } }, x: { grid: { color: '#334155' } } }, color: '#94a3b8' }
+        });
+
+        // 5. Simulate AI Execution
+        function executeAI() {
+            const btn = document.getElementById('run-btn');
+            
+            if (btn.disabled) return; 
+            
+            btn.disabled = true;
+            btn.innerText = "Processing DEM & Flow Accumulation...";
+            btn.classList.add('opacity-50', 'cursor-not-allowed');
+
+            setTimeout(() => {
+                if (!map.getSource('springshed')) {
+                    map.addSource('springshed', {
+                        'type': 'geojson',
+                        'data': {
+                            'type': 'Feature',
+                            'geometry': {
+                                'type': 'Polygon',
+                                'coordinates': [[[93.145, 26.115], [93.150, 26.130], [93.165, 26.125], [93.160, 26.110], [93.145, 26.115]]]
+                            }
+                        }
+                    });
+
+                    map.addLayer({
+                        'id': 'springshed-layer',
+                        'type': 'fill',
+                        'source': 'springshed',
+                        'layout': {},
+                        'paint': { 'fill-color': '#10b981', 'fill-opacity': 0.3 }
+                    });
+
+                    const interEl = document.createElement('div');
+                    interEl.className = 'intervention-marker';
+                    new mapboxgl.Marker(interEl)
+                        .setLngLat([93.156, 26.124])
+                        .setPopup(new mapboxgl.Popup({ offset: 25 }).setHTML('<h3 style="color:black;">AI Recommended Site</h3><p style="color:black;">Staggered Contour Trenches</p>'))
+                        .addTo(map);
+                }
+
+                btn.innerText = "Model Deployed";
+                document.getElementById('results').classList.remove('hidden');
+
+                map.flyTo({ center: [93.155, 26.110], zoom: 15, pitch: 75, bearing: -40, duration: 4000 });
+
+            }, 2500);
+        }
+
+        // 6. Soil Moisture Heatmap Logic
+        let heatmapVisible = false;
+
+        function toggleHeatmap() {
+            heatmapVisible = !heatmapVisible;
+            const btn = document.getElementById('heat-btn');
+            
+            if (heatmapVisible) {
+                btn.classList.replace('bg-slate-700', 'bg-blue-900');
+                btn.classList.add('border-blue-500');
+                
+                if (!map.getSource('soil-moisture')) {
+                    const features = [];
+                    for (let i = 0; i < 300; i++) {
+                        const lng = 93.135 + (Math.random() * 0.04); 
+                        const lat = 26.105 + (Math.random() * 0.04);
+                        const moistureLevel = Math.random(); 
+                        
+                        features.push({
+                            "type": "Feature",
+                            "geometry": { "type": "Point", "coordinates": [lng, lat] },
+                            "properties": { "moisture": moistureLevel }
+                        });
+                    }
+
+                    map.addSource('soil-moisture', {
+                        type: 'geojson',
+                        data: { "type": "FeatureCollection", "features": features }
+                    });
+
+                    map.addLayer({
+                        'id': 'soil-moisture-heat',
+                        'type': 'heatmap',
+                        'source': 'soil-moisture',
+                        'maxzoom': 16,
+                        'paint': {
+                            'heatmap-weight': ['interpolate', ['linear'], ['get', 'moisture'], 0, 0, 1, 1],
+                            'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 12, 1, 16, 3],
+                            'heatmap-color': [
+                                'interpolate', ['linear'], ['heatmap-density'],
+                                0, 'rgba(0, 0, 255, 0)',
+                                0.2, '#fde047', 
+                                0.5, '#22c55e', 
+                                0.8, '#3b82f6', 
+                                1, '#1e3a8a'    
+                            ],
+                            'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 12, 15, 16, 40],
+                            'heatmap-opacity': 0.65
+                        }
+                    }, 'springshed-layer'); 
+                } else {
+                    map.setLayoutProperty('soil-moisture-heat', 'visibility', 'visible');
+                }
+            } else {
+                map.setLayoutProperty('soil-moisture-heat', 'visibility', 'none');
+                btn.classList.replace('bg-blue-900', 'bg-slate-700');
+                btn.classList.remove('border-blue-500');
+            }
+        }
+    </script>
+</body>
+</html>
